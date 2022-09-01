@@ -1,6 +1,6 @@
 dist: .build/dist
 build:
   debug:
-    - run: trunk build
+    - run: trunk build --public-url "tools/adjacent-color-checker/"
   release:
-    - run: trunk build --release
+    - run: trunk build --release --public-url "tools/adjacent-color-checker/"
