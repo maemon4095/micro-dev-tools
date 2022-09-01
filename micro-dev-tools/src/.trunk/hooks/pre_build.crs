@@ -1,0 +1,34 @@
+use std::{env, fs, io::Result, path::Path, process, process::Command, process::Stdio};
+
+fn main() {
+    let current = env::current_dir().unwrap();
+    let mut fullpath = fs::canonicalize(current).unwrap();
+    fullpath.push("micro-dev-tools/src/.trunk/hooks");
+
+    let exe = Exe { base: fullpath };
+
+    exe.cargo_script("bundle", &["tools"]);
+}
+
+struct Exe<T: AsRef<Path>> {
+    base: T,
+}
+
+impl<T: AsRef<Path>> Exe<T> {
+    fn cargo_script<'a>(&self, script: &'a str, args: &'a [&str]) {
+        let mut cmd = Command::new("cargo");
+        cmd.arg("script")
+            .arg(self.base.as_ref().join(script))
+            .arg("--")
+            .args(args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
+        let len = 5;
+        let title = format!("===== cargo script exec : {:?} =====", script);
+        let end = "=".repeat(title.chars().count());
+        println!("\x1b[32m{}\x1b[0m", title);
+        cmd.output();
+        println!("\x1b[32m{}\x1b[0m", end);
+    }
+}

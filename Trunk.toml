@@ -1,0 +1,11 @@
+[build]
+target = "micro-dev-tools/src/www/index.html"
+dist = "micro-dev-tools/.build/dist"
+
+[watch]
+watch = ["micro-dev-tools/src/", "tools"]
+
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = ["script", "micro-dev-tools/src/.trunk/hooks/pre_build"]

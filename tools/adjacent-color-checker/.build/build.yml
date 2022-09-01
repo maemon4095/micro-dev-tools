@@ -1,0 +1,4 @@
+dist: dist
+
+build:
+  - run: cmd /C echo "before after"
