@@ -3,6 +3,15 @@
 version = 3
 
 [[package]]
+name = "adjacent-color-checker"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
+ "web-sys",
+ "yew",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

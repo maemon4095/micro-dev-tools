@@ -1,4 +1,6 @@
-dist: dist
-
+dist: .build/dist
 build:
-  - run: cmd /C echo "before after"
+  debug:
+    - run: trunk build
+  release:
+    - run: trunk build --release

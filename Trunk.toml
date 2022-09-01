@@ -4,8 +4,9 @@ dist = "micro-dev-tools/.build/dist"
 
 [watch]
 watch = ["micro-dev-tools/src/", "tools"]
+ignore = ["tools/adjacent-color-checker/.build/dist"]
 
 [[hooks]]
-stage = "pre_build"
+stage = "post_build"
 command = "cargo"
-command_arguments = ["script", "micro-dev-tools/src/.trunk/hooks/pre_build"]
+command_arguments = ["script", "micro-dev-tools/src/.trunk/hooks/post_build"]

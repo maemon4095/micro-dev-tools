@@ -1,4 +1,5 @@
 [workspace]
 members = [
-    "micro-dev-tools"
+    "micro-dev-tools",
+    "tools/adjacent-color-checker"
 ]

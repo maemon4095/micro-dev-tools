@@ -1,30 +1,51 @@
-// cargo-deps: yaml-rust, regex
+// cargo-deps: yaml-rust, regex, fs_extra
+extern crate fs_extra;
 extern crate regex;
 extern crate yaml_rust;
+use fs_extra::dir::CopyOptions;
 use regex::Regex;
 use std::{
+    collections::HashMap,
     env, fmt,
     fmt::Display,
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     str::FromStr,
 };
 use yaml_rust::*;
 
+const ANY_PATH_NAME: &str = "_";
+
+#[macro_export]
+macro_rules! write_err {
+    ($($arg:tt)*) => {
+        eprint!("\x1b[91m");
+        eprintln!($($arg)*);
+        eprint!("\x1b[0m");
+    };
+}
+
 fn main() {
     let bundle_config = BundleConfig {
         profile: env::var("TRUNK_PROFILE").unwrap(),
+        stage: env::var("TRUNK_STAGING_DIR").unwrap().strip_prefix(r"\\?\").unwrap().to_string(),
         build_config_path: ".build/build.yml".to_string(),
     };
 
     let path = env::args().skip(1).next().unwrap();
-    println!("search targets in {:?}", &path);
+    println!("[bundle] : bundle targets in {:?}", &path);
     let targets = targets(&bundle_config, &path);
     for target in targets {
         fs::read_to_string(target.as_path().join(&bundle_config.build_config_path))
             .ok()
-            .map(|conf| YamlLoader::load_from_str(&conf).ok())
+            .map(|conf| {
+                let result = YamlLoader::load_from_str(&conf);
+                if result.is_err() {
+                    eprintln!("[bundle] : config contains invalid syntax : {}", result.as_ref().unwrap_err());
+                }
+                result.ok()
+            })
             .flatten()
             .iter()
             .map(|docs| replace_config(&bundle_config, &docs[0]))
@@ -48,95 +69,158 @@ fn main() {
     }
 }
 
-#[derive(Debug)]
-struct Step {
-    exec: String,
-    working_dir: PathBuf,
-    args: Vec<String>,
-}
+fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
+    println!("[bundle] : build : {}", &config.target.display());
 
-struct BundleConfig {
-    profile: String,
-    build_config_path: String,
-}
+    let succeeded = config
+        .paths
+        .iter()
+        .filter(|(k, _)| is_match(k, &bundle_config.profile))
+        .fold(true, |prev, (n, p)| prev && execute_path(n, p));
 
-#[derive(Debug)]
-struct BuildConfig {
-    target: PathBuf,
-    dist: PathBuf,
-    release: Vec<Step>,
-    debug: Vec<Step>,
-    any: Vec<Step>,
-}
+    if !succeeded || !copy_dist(bundle_config, config) {
+        write_err!("[bundle] : failed to build : {}", &config.target.display());
+    }
 
-fn build(_bundle_config: &BundleConfig, config: &BuildConfig) {
-    println!("build {}", &config.target.display());
+    fn is_match(pattern: &str, profile: &str) -> bool {
+        match pattern {
+            ANY_PATH_NAME => true,
+            _ => profile == pattern,
+        }
+    }
 
-    config.any.iter().for_each(|step| {
+    fn execute_path(name: &str, path: &Vec<Step>) -> bool {
+        println!("[bundle] : execute path : {}", name);
+        let result = path.iter().fold(true, |prev_is_succeeded, step| {
+            if !prev_is_succeeded {
+                return false;
+            }
+            execute_step(step)
+        });
+
+        if !result {
+            eprint!("\x1b[91m");
+            eprintln!("[bundle] : faild to execute path : {}", name);
+            eprint!("\x1b[0m");
+        }
+
+        result
+    }
+
+    fn execute_step(step: &Step) -> bool {
         let mut cmd = Command::new(&step.exec);
         cmd.current_dir(&step.working_dir).args(&step.args);
+        println!("[bundle] : run : {:?}", &step.label);
+        let result = cmd.output();
+        match result {
+            Err(err) => {
+                write_err!("[bundle] : faild to run step {} : {}", &step.label, err);
+                false
+            }
+            Ok(output) => {
+                println!("{}", String::from_utf8_lossy(&output.stdout));
+                if !output.stderr.is_empty() {
+                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                };
 
-        let result = cmd.spawn();
-
-        if let Err(err) = result {
-            println!("faild to build {} : {}", &config.target.display(), err);
+                let success = output.status.success();
+                if !success {
+                    write_err!("[bundle] : faild to build");
+                }
+                success
+            }
         }
-    });
+    }
+}
+
+fn copy_dist(bundle_config: &BundleConfig, config: &BuildConfig) -> bool {
+    println!("[bundle] : copy dist : {}", config.dist.display());
+    let entries = if let Ok(entries) = fs::read_dir(config.dist.as_path()) {
+        entries
+    } else {
+        write_err!("{} was not exist", config.dist.display());
+        return false;
+    };
+    let mut options = CopyOptions::new();
+    options.overwrite = true;
+    let output = Path::new(&bundle_config.stage).join(config.target.as_path());
+    let items = entries.filter_map(|e| e.ok().map(|e| e.path())).collect::<Vec<_>>();
+    let result = fs::create_dir_all(output.as_path());
+    if let Err(err) = result.as_ref() {
+        write_err!("[bundle] : cannot create output dir {}", err);
+        return false;
+    }
+
+    let result = fs_extra::copy_items(&items, output, &options);
+
+    if let Err(err) = result.as_ref() {
+        write_err!("[bundle] : cannot copy {}", err);
+        return false;
+    }
+    return true;
 }
 
 fn read_config(target: &impl AsRef<Path>, doc: &Yaml) -> Result<BuildConfig, ConfigErr> {
     let dist = doc["dist"].as_str().unwrap_or("dist");
     let dist = target.as_ref().join(dist);
     let build = &doc["build"];
-    let (release, debug, any) = match build {
+    let paths = match build {
         Yaml::Array(steps) => {
-            let any = parse_steps(target, &steps);
-            if let Err(err) = any {
-                return Err(err);
-            }
-
-            (vec![], vec![], any.unwrap())
+            let any = parse_steps(target, &steps)?;
+            let mut map = HashMap::new();
+            map.insert(ANY_PATH_NAME.to_string(), any);
+            map
         }
-        Yaml::Hash(_) => {
-            let release = build["release"].as_vec().map(|steps| parse_steps(target, steps)).unwrap_or(Ok(vec![]));
-            let debug = build["debug"].as_vec().map(|steps| parse_steps(target, steps)).unwrap_or(Ok(vec![]));
-            let any = build["any"].as_vec().map(|steps| parse_steps(target, steps)).unwrap_or(Ok(vec![]));
-
-            if let Some(err) = release.as_ref().err().or(debug.as_ref().err()).or(any.as_ref().err()) {
-                return Err(*err);
-            }
-
-            (release.unwrap(), debug.unwrap(), any.unwrap())
+        Yaml::Hash(hash) => {
+            let paths = hash
+                .iter()
+                .filter_map(|(k, v)| {
+                    let steps = v.as_vec().map(|steps| parse_steps(target, steps))?;
+                    let key = k.as_str()?;
+                    return Some(steps.map(|s| (key.to_string(), s)));
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?;
+            paths
         }
-        _ => (vec![], vec![], vec![]),
+        _ => HashMap::new(),
     };
 
     return Ok(BuildConfig {
         target: target.as_ref().to_path_buf(),
         dist,
-        release,
-        debug,
-        any,
+        paths,
     });
 
     fn parse_steps(target: &impl AsRef<Path>, steps: &Vec<Yaml>) -> Result<Vec<Step>, ConfigErr> {
         let steps = steps.iter().map(|step| {
             let run = step["run"].as_str();
-            let args = step["args"].as_str();
             if run.is_none() {
                 return Err(ConfigErr::NoRunProperty);
             }
             let run = run.unwrap();
-            let mut splitted = run.splitn(2, ' ');
-            let exec = splitted.next().unwrap();
-            let mut step = Step {
-                exec: exec.to_string(),
-                working_dir: target.as_ref().to_path_buf(),
-                args: splitted.map(|s| s.to_string()).collect(),
+            let splitted = split(run);
+            let exec = splitted[0].to_string();
+            let args: Vec<_> = splitted.iter().skip(1).map(|s| s.to_string()).collect();
+            let label = if let Some(label) = step["label"].as_str() {
+                label.to_string()
+            } else {
+                args.iter().fold(exec.as_str().to_string(), |mut label, arg| {
+                    label.push(' ');
+                    label.push_str(arg);
+                    label
+                })
             };
-            if let Some(args) = args {
-                step.args.push(args.to_string());
+            let mut working_dir = target.as_ref().to_path_buf();
+            if let Some(dir) = step["working_dir"].as_str() {
+                working_dir.push(dir);
             }
+
+            let step = Step {
+                exec: exec.to_string(),
+                working_dir,
+                args,
+                label,
+            };
             return Ok(step);
         });
 
@@ -152,11 +236,70 @@ fn read_config(target: &impl AsRef<Path>, doc: &Yaml) -> Result<BuildConfig, Con
     }
 }
 
+fn split<'a>(args: &'a str) -> Vec<&'a str> {
+    let mut stack = Vec::new();
+    enum State {
+        Initial,
+        Plain { offset: usize },
+        Quoted { offset: usize, quote: char },
+    }
+    let mut state = State::Initial;
+    for (i, c) in args.char_indices() {
+        state = match state {
+            State::Initial => {
+                if c.is_whitespace() {
+                    State::Initial
+                } else if matches!(c, '"' | '\'') {
+                    State::Quoted { offset: i, quote: c }
+                } else {
+                    State::Plain { offset: i }
+                }
+            }
+
+            State::Plain { offset } => {
+                if c.is_whitespace() {
+                    stack.push(&args[offset..i]);
+                    State::Initial
+                } else if matches!(c, '"' | '\'') {
+                    stack.push(&args[offset..i]);
+                    State::Quoted { offset, quote: c }
+                } else {
+                    State::Plain { offset }
+                }
+            }
+
+            State::Quoted { offset, quote } => {
+                if c == quote {
+                    stack.push(&args[offset..i]);
+                    State::Initial
+                } else {
+                    State::Quoted { offset, quote }
+                }
+            }
+        }
+    }
+
+    match state {
+        State::Plain { offset } => {
+            stack.push(&args[offset..]);
+        }
+        State::Quoted { offset, .. } => {
+            stack.push(&args[offset..]);
+        }
+        _ => {}
+    }
+
+    return stack;
+}
+
 fn replace_config(bundle_config: &BundleConfig, doc: &Yaml) -> Result<Yaml, ConfigErr> {
     let mut clone = doc.clone();
     let pattern = Regex::new("\\$\\{\\{(.*)}}").unwrap();
-    replace(bundle_config, &pattern, &mut clone, doc);
-    return Ok(clone);
+    let unresolved = replace(bundle_config, &pattern, &mut clone, doc);
+    if unresolved.is_empty() {
+        return Ok(clone);
+    }
+    return Err(resolve(bundle_config, unresolved[0], doc).unwrap_err());
 
     fn replace<'a>(bundle_config: &'a BundleConfig, pattern: &'a Regex, clone: &'a mut Yaml, doc: &'a Yaml) -> Vec<&'a mut String> {
         use Yaml::*;
@@ -179,7 +322,7 @@ fn replace_config(bundle_config: &BundleConfig, doc: &Yaml) -> Result<Yaml, Conf
             let mut resolved = true;
             let replaced = pattern.replace_all(val, |caps: &regex::Captures| {
                 let reference = caps[1].trim();
-                resolve(bundle_config, reference, doc).unwrap_or_else(|| {
+                resolve(bundle_config, reference, doc).unwrap_or_else(|_| {
                     resolved = false;
                     caps[0].to_string()
                 })
@@ -193,43 +336,55 @@ fn replace_config(bundle_config: &BundleConfig, doc: &Yaml) -> Result<Yaml, Conf
     }
 }
 
-fn resolve(bundle_config: &BundleConfig, reference: &str, doc: &Yaml) -> Option<String> {
-    println!("resolve {}", reference);
+fn resolve(bundle_config: &BundleConfig, reference: &str, doc: &Yaml) -> Result<String, ConfigErr> {
     const ENV_PREFIX: &'static str = "env:";
     const CONF_PREFIX: &'static str = "conf:";
     if reference.starts_with(ENV_PREFIX) {
         let name = reference.strip_prefix(ENV_PREFIX).unwrap();
         if let Ok(var) = env::var(name) {
-            return Some(var);
+            return Ok(var);
         } else {
-            panic!("environment value of {} was not exist", name);
+            return Err(ConfigErr::ReferenceNotFound {
+                msg: format!("environment value of {} was not exist", name),
+            });
         }
     } else if reference.starts_with(CONF_PREFIX) {
         let name = reference.strip_prefix(CONF_PREFIX).unwrap();
         let value = match name {
             "profile" => bundle_config.profile.clone(),
-            _ => panic!("config of {} was not exist", name),
+            "stage" => bundle_config.stage.clone(),
+            _ => {
+                return Err(ConfigErr::ReferenceNotFound {
+                    msg: format!("config of {} was not exist", name),
+                })
+            }
         };
-        return Some(value);
+        return Ok(value);
     } else {
         let v = access(doc, reference);
-        return v.as_str().map(|s| s.to_string());
+        return to_string(v).ok_or(ConfigErr::ReferenceNotFound {
+            msg: format!("reference of {} was not resolved", reference),
+        });
     }
 
     fn access<'a, 'b>(mut doc: &'a Yaml, path: &'b str) -> &'a Yaml {
         for key in path.split('.') {
             doc = match &doc[key] {
-                n @ Yaml::BadValue => {
-                    if let Ok(index) = usize::from_str(key) {
-                        &doc[index]
-                    } else {
-                        n
-                    }
-                }
+                Yaml::BadValue => usize::from_str(key).map(|i| &doc[i]).unwrap_or(&Yaml::BadValue),
                 n @ _ => n,
             };
         }
         return doc;
+    }
+    fn to_string(doc: &Yaml) -> Option<String> {
+        match doc {
+            Yaml::Real(s) => Some(s.clone()),
+            Yaml::Integer(i) => Some(i.to_string()),
+            Yaml::String(s) => Some(s.clone()),
+            Yaml::Boolean(f) => Some(f.to_string()),
+            Yaml::Null => Some("~".to_string()),
+            _ => None,
+        }
     }
 }
 
@@ -238,41 +393,6 @@ fn swap_remove_all_mut<T: Sized>(vec: &mut Vec<T>, mut predicate: impl FnMut(&mu
     while let Some(pos) = vec[..rest].iter_mut().rposition(&mut predicate) {
         vec.swap_remove(pos);
         rest = pos;
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ConfigErr {
-    NoRunProperty,
-}
-
-impl Display for ConfigErr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use ConfigErr::*;
-        match self {
-            NoRunProperty => write!(
-                f,
-                "{}",
-                "\
-            build step must have run property.
-            
-            === example ===
-
-            build:
-              release:
-                - run: ls
-              debug:
-                - run: echo debug
-              any:
-                - run: cd ..
-            
-            ===============
-
-            build:
-              - run: cd ..
-            "
-            ),
-        }
     }
 }
 
@@ -296,4 +416,65 @@ fn targets(bundle_config: &BundleConfig, path: &impl AsRef<Path>) -> Vec<PathBuf
         })
         .flatten()
         .collect::<Vec<_>>();
+}
+
+#[derive(Debug)]
+struct Step {
+    label: String,
+    exec: String,
+    args: Vec<String>,
+    working_dir: PathBuf,
+}
+
+#[derive(Debug)]
+struct BundleConfig {
+    profile: String,
+    stage: String,
+    build_config_path: String,
+}
+
+#[derive(Debug)]
+struct BuildConfig {
+    target: PathBuf,
+    dist: PathBuf,
+    paths: HashMap<String, Vec<Step>>,
+}
+
+#[derive(Debug, Clone)]
+enum ConfigErr {
+    NoRunProperty,
+    ReferenceNotFound { msg: String },
+}
+
+impl Display for ConfigErr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use ConfigErr::*;
+        match self {
+            NoRunProperty => write!(
+                f,
+                "{}",
+                "\
+            build step must have run property.
+            
+            === example ===
+
+            build:
+              release:
+                - run: ls
+              debug:
+                - run: echo debug
+              _:
+                - run: cd ..
+            
+            ===============
+
+            build:
+              - run: cd ..
+            
+            ===============
+            "
+            ),
+            ReferenceNotFound { msg } => write!(f, "{}", msg),
+        }
+    }
 }
