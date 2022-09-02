@@ -15,6 +15,6 @@ fn main() {
 #[function_component(App)]
 fn app() -> Html {
     html! {
-        <a>{"yo!"}</a>
+        <a>{"mo!"}</a>
     }
 }

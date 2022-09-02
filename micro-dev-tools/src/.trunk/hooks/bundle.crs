@@ -29,14 +29,19 @@ macro_rules! write_err {
 fn main() {
     let bundle_config = BundleConfig {
         profile: env::var("TRUNK_PROFILE").unwrap(),
-        stage: env::var("TRUNK_STAGING_DIR").unwrap().strip_prefix(r"\\?\").unwrap().to_string(),
+        stage: env::var("TRUNK_STAGING_DIR").unwrap().stripped(r"\\?\").to_string(),
+        html_file: env::var("TRUNK_HTML_FILE").unwrap().stripped(r"\\?\").to_string(),
+        source_dir: env::var("TRUNK_SOURCE_DIR").unwrap().stripped(r"\\?\").to_string(),
+        dist_dir: env::var("TRUNK_DIST_DIR").unwrap().stripped(r"\\?\").to_string(),
+        public_url: env::var("TRUNK_PUBLIC_URL").unwrap(),
         build_config_path: ".build/build.yml".to_string(),
     };
 
     let path = env::args().skip(1).next().unwrap();
-    println!("[bundle] : bundle targets in {:?}", &path);
+    println!("[bundle] : bundle targets in {}", &path);
     let targets = targets(&bundle_config, &path);
     for target in targets {
+        println!("[bundle] : target : {}", &target.as_os_str().to_string_lossy());
         fs::read_to_string(target.as_path().join(&bundle_config.build_config_path))
             .ok()
             .map(|conf| {
@@ -48,12 +53,12 @@ fn main() {
             })
             .flatten()
             .iter()
-            .map(|docs| replace_config(&bundle_config, &docs[0]))
+            .map(|docs| replace_config(&bundle_config, &target, &docs[0]))
             .map(|doc| doc.map(|doc| read_config(&target, &doc)))
             .map(flatten)
             .for_each(|config| {
                 if let Err(err) = config {
-                    eprintln!("{}", err);
+                    write_err!("[bundle] : {}", err);
                 } else {
                     let config = config.unwrap();
                     build(&bundle_config, &config);
@@ -67,10 +72,20 @@ fn main() {
             Err(err) => return Err(err),
         }
     }
+
+    trait StrippedExtension {
+        fn stripped<'a>(&'a self, prefix: &Self) -> &'a Self;
+    }
+
+    impl StrippedExtension for str {
+        fn stripped<'a>(&'a self, prefix: &str) -> &'a Self {
+            self.strip_prefix(prefix).unwrap_or(self)
+        }
+    }
 }
 
 fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
-    println!("[bundle] : build : {}", &config.target.display());
+    println!("[bundle] : build : {}", &config.target.as_os_str().to_string_lossy());
 
     let succeeded = config
         .paths
@@ -79,7 +94,7 @@ fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
         .fold(true, |prev, (n, p)| prev && execute_path(n, p));
 
     if !succeeded || !copy_dist(bundle_config, config) {
-        write_err!("[bundle] : failed to build : {}", &config.target.display());
+        write_err!("[bundle] : failed to build : {}", &config.target.as_os_str().to_string_lossy());
     }
 
     fn is_match(pattern: &str, profile: &str) -> bool {
@@ -110,7 +125,7 @@ fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
     fn execute_step(step: &Step) -> bool {
         let mut cmd = Command::new(&step.exec);
         cmd.current_dir(&step.working_dir).args(&step.args);
-        println!("[bundle] : run : {:?}", &step.label);
+        println!("[bundle] : run : {}", &step.label);
         let result = cmd.output();
         match result {
             Err(err) => {
@@ -118,9 +133,9 @@ fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
                 false
             }
             Ok(output) => {
-                println!("{}", String::from_utf8_lossy(&output.stdout));
+                println!("{}", String::from_utf8_lossy(&output.stdout).as_ref());
                 if !output.stderr.is_empty() {
-                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                    eprintln!("{}", String::from_utf8_lossy(&output.stderr).as_ref());
                 };
 
                 let success = output.status.success();
@@ -134,11 +149,11 @@ fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
 }
 
 fn copy_dist(bundle_config: &BundleConfig, config: &BuildConfig) -> bool {
-    println!("[bundle] : copy dist : {}", config.dist.display());
+    println!("[bundle] : copy dist : {}", config.dist.as_os_str().to_string_lossy());
     let entries = if let Ok(entries) = fs::read_dir(config.dist.as_path()) {
         entries
     } else {
-        write_err!("{} was not exist", config.dist.display());
+        write_err!("{} was not exist", config.dist.as_os_str().to_string_lossy());
         return false;
     };
     let mut options = CopyOptions::new();
@@ -242,6 +257,7 @@ fn split<'a>(args: &'a str) -> Vec<&'a str> {
         Initial,
         Plain { offset: usize },
         Quoted { offset: usize, quote: char },
+        QuoteEnd { offset: usize },
     }
     let mut state = State::Initial;
     for (i, c) in args.char_indices() {
@@ -270,10 +286,20 @@ fn split<'a>(args: &'a str) -> Vec<&'a str> {
 
             State::Quoted { offset, quote } => {
                 if c == quote {
-                    stack.push(&args[offset..i]);
-                    State::Initial
+                    State::QuoteEnd { offset }
                 } else {
                     State::Quoted { offset, quote }
+                }
+            }
+
+            State::QuoteEnd { offset } => {
+                stack.push(&args[offset..i]);
+                if c.is_whitespace() {
+                    State::Initial
+                } else if matches!(c, '"' | '\'') {
+                    State::Quoted { offset: i, quote: c }
+                } else {
+                    State::Plain { offset: i }
                 }
             }
         }
@@ -286,61 +312,67 @@ fn split<'a>(args: &'a str) -> Vec<&'a str> {
         State::Quoted { offset, .. } => {
             stack.push(&args[offset..]);
         }
+        State::QuoteEnd { offset } => {
+            stack.push(&args[offset..]);
+        }
         _ => {}
     }
 
     return stack;
 }
 
-fn replace_config(bundle_config: &BundleConfig, doc: &Yaml) -> Result<Yaml, ConfigErr> {
+fn replace_config(bundle_config: &BundleConfig, target: &impl AsRef<Path>, doc: &Yaml) -> Result<Yaml, ConfigErr> {
     let mut clone = doc.clone();
-    let pattern = Regex::new("\\$\\{\\{(.*)}}").unwrap();
-    let unresolved = replace(bundle_config, &pattern, &mut clone, doc);
-    if unresolved.is_empty() {
-        return Ok(clone);
-    }
-    return Err(resolve(bundle_config, unresolved[0], doc).unwrap_err());
+    let pattern = Regex::new(r"\$\{\{(.*?)}}").unwrap();
+    let unresolved = replace(bundle_config, target, &pattern, &mut clone, doc);
+    return unresolved.into_iter().find_map(|(_, err)| err).map(|e| Err(e)).unwrap_or_else(|| Ok(clone));
 
-    fn replace<'a>(bundle_config: &'a BundleConfig, pattern: &'a Regex, clone: &'a mut Yaml, doc: &'a Yaml) -> Vec<&'a mut String> {
+    fn replace<'a>(
+        bundle_config: &'a BundleConfig,
+        target: &impl AsRef<Path>,
+        pattern: &'a Regex,
+        clone: &'a mut Yaml,
+        doc: &'a Yaml,
+    ) -> Vec<(&'a mut String, Option<ConfigErr>)> {
         use Yaml::*;
         let mut unresolved = match clone {
-            String(ref mut s) => vec![s],
+            String(ref mut s) => vec![(s, None)],
             Hash(ref mut hash) => hash
                 .iter_mut()
                 .filter_map(|(k, v)| k.as_str().map(|k| (k, v)))
-                .flat_map(|(k, v)| replace(bundle_config, pattern, v, &doc[k]))
+                .flat_map(|(k, v)| replace(bundle_config, target, pattern, v, &doc[k]))
                 .collect(),
             Array(ref mut array) => array
                 .iter_mut()
                 .enumerate()
-                .flat_map(|(i, v)| replace(bundle_config, pattern, v, &doc[i]))
+                .flat_map(|(i, v)| replace(bundle_config, target, pattern, v, &doc[i]))
                 .collect(),
             _ => vec![],
         };
 
-        swap_remove_all_mut(&mut unresolved, |val| {
-            let mut resolved = true;
-            let replaced = pattern.replace_all(val, |caps: &regex::Captures| {
+        swap_remove_all_mut(&mut unresolved, |(s, error)| {
+            let replaced = pattern.replace_all(s, |caps: &regex::Captures| {
                 let reference = caps[1].trim();
-                resolve(bundle_config, reference, doc).unwrap_or_else(|_| {
-                    resolved = false;
+                resolve(bundle_config, target, reference, doc).unwrap_or_else(|e| {
+                    if error.is_none() {
+                        *error = Some(e);
+                    }
                     caps[0].to_string()
                 })
             });
-
-            **val = replaced.to_string();
-            resolved
+            **s = replaced.into_owned();
+            error.is_none()
         });
 
         return unresolved;
     }
 }
 
-fn resolve(bundle_config: &BundleConfig, reference: &str, doc: &Yaml) -> Result<String, ConfigErr> {
-    const ENV_PREFIX: &'static str = "env:";
-    const CONF_PREFIX: &'static str = "conf:";
-    if reference.starts_with(ENV_PREFIX) {
-        let name = reference.strip_prefix(ENV_PREFIX).unwrap();
+fn resolve(bundle_config: &BundleConfig, target: &impl AsRef<Path>, reference: &str, doc: &Yaml) -> Result<String, ConfigErr> {
+    const ENV_PREFIX: &str = "env:";
+    const CONF_PREFIX: &str = "config:";
+    const SELF_PREFIX: &str = "self:";
+    if let Some(name) = reference.strip_prefix(ENV_PREFIX) {
         if let Ok(var) = env::var(name) {
             return Ok(var);
         } else {
@@ -348,14 +380,28 @@ fn resolve(bundle_config: &BundleConfig, reference: &str, doc: &Yaml) -> Result<
                 msg: format!("environment value of {} was not exist", name),
             });
         }
-    } else if reference.starts_with(CONF_PREFIX) {
-        let name = reference.strip_prefix(CONF_PREFIX).unwrap();
+    } else if let Some(name) = reference.strip_prefix(CONF_PREFIX) {
         let value = match name {
             "profile" => bundle_config.profile.clone(),
             "stage" => bundle_config.stage.clone(),
+            "public_url" => bundle_config.public_url.clone(),
+            "html_file" => bundle_config.html_file.clone(),
+            "source_dir" => bundle_config.source_dir.clone(),
+            "dist_dir" => bundle_config.dist_dir.clone(),
+            "build_config_path" => bundle_config.build_config_path.clone(),
             _ => {
                 return Err(ConfigErr::ReferenceNotFound {
                     msg: format!("config of {} was not exist", name),
+                })
+            }
+        };
+        return Ok(value);
+    } else if let Some(name) = reference.strip_prefix(SELF_PREFIX) {
+        let value = match name {
+            "identity" => target.as_ref().as_os_str().to_string_lossy().as_ref().replace('\\', "/"),
+            _ => {
+                return Err(ConfigErr::ReferenceNotFound {
+                    msg: format!("self:{} was not exist", name),
                 })
             }
         };
@@ -382,7 +428,7 @@ fn resolve(bundle_config: &BundleConfig, reference: &str, doc: &Yaml) -> Result<
             Yaml::Integer(i) => Some(i.to_string()),
             Yaml::String(s) => Some(s.clone()),
             Yaml::Boolean(f) => Some(f.to_string()),
-            Yaml::Null => Some("~".to_string()),
+            Yaml::Null => Some("".to_string()),
             _ => None,
         }
     }
@@ -430,6 +476,10 @@ struct Step {
 struct BundleConfig {
     profile: String,
     stage: String,
+    public_url: String,
+    html_file: String,
+    source_dir: String,
+    dist_dir: String,
     build_config_path: String,
 }
 

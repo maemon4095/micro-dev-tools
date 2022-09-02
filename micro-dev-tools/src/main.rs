@@ -1,3 +1,4 @@
+mod pages;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 use yew_router::prelude::*;
@@ -25,7 +26,7 @@ fn app() -> Html {
 fn switch(route: &Route) -> Html {
     match route {
         Route::NotFound => html! { <a> { "not found" } </a>},
-        Route::Home => html! {<p> { "home"} </p>},
+        Route::Home => html! { <pages::Home/> },
     }
 }
 
