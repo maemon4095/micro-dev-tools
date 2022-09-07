@@ -9,5 +9,5 @@ edition = "2021"
 yaml-rust = "*"
 regex = "*"
 fs_extra ="*"
-inline-collection = {version= "*", path="../../../../../libraries/inline-collection"} 
+inline-collection = { git="https://github.com/maemon4095/inline-collection" } 
 lazy_static = "1.4.0"

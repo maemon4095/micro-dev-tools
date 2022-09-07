@@ -233,6 +233,7 @@ dependencies = [
 [[package]]
 name = "inline-collection"
 version = "0.0.0"
+source = "git+https://github.com/maemon4095/inline-collection#c1dfe1487ac6fc7723d1bffbb858a571cd4ad7a4"
 
 [[package]]
 name = "itoa"
