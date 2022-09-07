@@ -145,7 +145,7 @@ fn build(bundle_config: &BundleConfig, config: &BuildConfig) {
 }
 
 fn copy_artifacts(config: &BuildConfig) -> bool {
-    log!(info; "copy artifacts : {}", config.dist.as_os_str().to_string_lossy());
+    log!(info; "copy artifacts from {} to {}", config.dist.as_os_str().to_string_lossy(), config.deploy.as_os_str().to_string_lossy());
     let entries = if let Ok(entries) = fs::read_dir(config.dist.as_path()) {
         entries
     } else {
@@ -450,7 +450,7 @@ impl<'a> ParseContext<'a> {
                 Ok(e) => stringify(&*e)
                     .map(|s| Path::new(&s).to_path_buf())
                     .ok_or_else(|| BuildConfigError::invalid_prop_value("deploy"))?,
-                Err(_) => Path::new(&self.bundle_config.default_deploy_dir).to_path_buf(),
+                Err(_) => Path::new(&self.bundle_config.default_deploy_dir).join(&self.stage.target),
             };
 
             self.stage.deploy = Some(deploy);
