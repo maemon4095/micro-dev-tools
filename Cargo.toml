@@ -1,5 +1,7 @@
 [workspace]
 members = [
     "micro-dev-tools",
-    "tools/adjacent-color-checker"
+    "micro-dev-tools/src/.trunk/hooks/bundle",
+    "tools/*",
+    "libraries/*",
 ]
