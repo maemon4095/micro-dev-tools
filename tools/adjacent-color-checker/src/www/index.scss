@@ -10,8 +10,6 @@ input[type="color"] {
     padding: 0;
     border: none;
     outline: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
 }
 
 input[type="color"]::-webkit-color-swatch {
@@ -26,4 +24,9 @@ input[type="color"]::-webkit-color-swatch-wrapper {
 button {
     padding: 0px;
     border: none;
+}
+
+button:hover {
+    box-shadow:
+        inset 0 0 1em black
 }
