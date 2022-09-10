@@ -29,7 +29,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            xengram/.build/
+            ./micro-dev-tools/.build
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: add target
@@ -44,12 +44,6 @@ jobs:
         uses: baptiste0928/cargo-install@v1
         with:
           crate: cargo-script
-
-      - name: restore build cache
-        uses: actions/cache@v3
-        with:
-          path: .output
-          key: ${{ runner.os }}-micro-dev-tools
 
       - run: trunk build --release --public-url "$REPOSITORY_NAME/$BRANCH/"
       

@@ -7,7 +7,22 @@ fn main() {
 
     let exe = Exe { base: fullpath };
 
-    exe.cargo_run("bundle", &[]);
+    cargo_run("bundle", &["-t", "tools"]);
+}
+
+fn execute(mut cmd: Command, title: &str) {
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    let title = format!("===== {:?} =====", title);
+    let end = "=".repeat(title.chars().count());
+    println!("\x1b[32m{}\x1b[0m", title);
+    cmd.output();
+    println!("\x1b[32m{}\x1b[0m", end);
+}
+
+fn cargo_run(target: &str, args: &[&str]) {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("run").arg("-p").arg(target).arg("--").args(args);
+    execute(cmd, target);
 }
 
 struct Exe<T: AsRef<Path>> {
@@ -17,36 +32,8 @@ struct Exe<T: AsRef<Path>> {
 impl<T: AsRef<Path>> Exe<T> {
     fn cargo_script<'a>(&self, script: &'a str, args: &'a [&str]) {
         let mut cmd = Command::new("cargo");
-        cmd.arg("run")
-            .arg(self.base.as_ref().join(script))
-            .arg("--")
-            .args(args)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+        cmd.arg("script").arg(self.base.as_ref().join(script)).arg("--").args(args);
 
-        let len = 5;
-        let title = format!("===== cargo script : {:?} =====", script);
-        let end = "=".repeat(title.chars().count());
-        println!("\x1b[32m{}\x1b[0m", title);
-        cmd.output();
-        println!("\x1b[32m{}\x1b[0m", end);
-    }
-
-    fn cargo_run<'a>(&self, script: &'a str, args: &'a [&str]) {
-        let mut cmd = Command::new("cargo");
-        cmd.current_dir(self.base.as_ref().join(script))
-            .arg("run")
-            .arg("--")
-            .args(args)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-
-        println!("{}", self.base.as_ref().join(script).as_os_str().to_string_lossy());
-        let len = 5;
-        let title = format!("===== cargo run : {:?} =====", script);
-        let end = "=".repeat(title.chars().count());
-        println!("\x1b[32m{}\x1b[0m", title);
-        cmd.output();
-        println!("\x1b[32m{}\x1b[0m", end);
+        execute(cmd, script);
     }
 }

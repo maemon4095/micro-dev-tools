@@ -9,5 +9,4 @@ ignore = ["tools/adjacent-color-checker/.build/dist"]
 [[hooks]]
 stage = "pre_build"
 command = "cargo"
-# command_arguments = ["script", "micro-dev-tools/src/.trunk/hooks/pre_build"]
-command_arguments = ["run", "-p", "bundle", "--", "-t", "tools"]
+command_arguments = ["script", "micro-dev-tools/src/.trunk/hooks/pre_build"]
