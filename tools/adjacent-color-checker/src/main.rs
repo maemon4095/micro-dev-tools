@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
@@ -16,132 +18,130 @@ fn main() {
 #[function_component(App)]
 fn app() -> Html {
     html! {
-        <ColorGrid width={1} height={1}/>
+        <ColorGrid/>
     }
 }
 
 enum Msg {
-    RemoveRow { from: f32, to: f32 },
-    RemoveColumn { from: f32, to: f32 },
-    AddRow { index: isize },
-    AddColumn { index: isize },
+    SplitRow { x: usize, y: usize },
+    SplitColumn { x: usize, y: usize },
+    Merge { x: usize, y: usize, w: usize, h: usize },
     SetColor { x: usize, y: usize, color: String },
+    SetContextMenuState(bool),
 }
 #[derive(Properties, PartialEq)]
-struct Props {
-    width: usize,
-    height: usize,
-}
 struct ColorGrid {
     width: usize,
     height: usize,
-    colors: Vec<Vec<String>>,
+    colors: HashMap<(usize, usize), (usize, usize, String)>,
+    contextmenu_hidden: bool,
 }
 
 fn default_color() -> String {
     String::from("#000000")
 }
-impl Component for ColorGrid {
-    type Message = Msg;
 
-    type Properties = Props;
-
-    fn create(ctx: &Context<Self>) -> Self {
-        let props = ctx.props();
-        Self {
-            width: props.width,
-            height: props.height,
-            colors: vec![vec![default_color(); props.width]; props.height],
-        }
-    }
-
-    fn view(&self, ctx: &Context<Self>) -> Html {
+impl ColorGrid {
+    fn main(&self, ctx: &Context<Self>) -> Html {
         let colors = &self.colors;
         let width = self.width;
         let height = self.height;
-        let onclick_up = ctx.link().callback(|_| Msg::AddRow { index: 0 });
-        let onclick_down = ctx.link().callback(|_| Msg::AddRow { index: -1 });
-        let onclick_left = ctx.link().callback(|_| Msg::AddColumn { index: 0 });
-        let onclick_right = ctx.link().callback(|_| Msg::AddColumn { index: -1 });
         let oninput = ctx.link().batch_callback(|e: InputEvent| {
             e.target_dyn_into::<HtmlInputElement>().and_then(|e| {
-                e.get_attribute("data-position")
-                    .and_then(|attr| attr.split_once(' ').map(|(y, x)| (y.parse().unwrap(), x.parse().unwrap())))
-                    .map(|(y, x): (usize, usize)| Msg::SetColor { x, y, color: e.value() })
+                e.parent_element().and_then(|p| {
+                    p.get_attribute("data-position")
+                        .and_then(|attr| attr.split_once(' ').map(|(y, x)| (y.parse().unwrap(), x.parse().unwrap())))
+                        .map(|(y, x): (usize, usize)| Msg::SetColor { x, y, color: e.value() })
+                })
             })
         });
+
         html! {
             <div style={format!("\
                 display: grid; gap: 0;\
-                grid-template-rows: 15px repeat({}, minmax(0, 1fr)) 15px;\
-                grid-template-columns: 15px repeat({}, minmax(0, 1fr)) 15px;
+                grid-template-rows: repeat({}, minmax(0, 1fr));\
+                grid-template-columns: repeat({}, minmax(0, 1fr));
                 place-items: center; overflow:hidden; ", height, width)}>
-                <button style="grid-row: 1; grid-column: 2 / -2;"
-                        draggable="true"
-                        onclick={onclick_up}>//up
-                </button>
-                <button style="grid-row: -2; grid-column: 2 / -2;"
-                        draggable="true"
-                        onclick={onclick_down}>//down
-                </button>
-                <button style="grid-row: 2 / -2; grid-column: 1;"
-                        draggable="true"
-                        onclick={onclick_left}>//left
-                </button>
-                <button style="grid-row: 2 / -2; grid-column: -2;"
-                        draggable="true"
-                        onclick={onclick_right}>//right
-                </button>
                 {
-                    colors.iter().enumerate().flat_map(|(y, row)| row.iter().enumerate().map(move |(x, e)| (x, y, e))).map(|(x, y, e)| {
-                        let area_rule = format!("grid-area: {}/{}", y + 2, x + 2);
-                        let color_display_style = format!("{area_rule}; background-color: {e};");
-                        let input_style =format!("{area_rule}; max-width: 11em; max-height: 5em;");
-                        let hex_display_style = format!("{area_rule};\
-                            max-width: min-content; max-height: 1em;\
+                    colors.iter().map(|((y, x), (h, w, color))| {
+                        let area_rule = format!("grid-area: {y} / {x} / span {h} / span {w}");
+                        let container_style = format!("\
+                            {area_rule};\
+                            display: grid;\
+                            grid-template: main 1fr / 1fr;\
+                            background-color: {color};");
+                        let input_style =format!("max-width: 11em; max-height: 5em; grid-area: main;");
+                        let hex_display_style = format!("\
+                            max-width: min-content; max-height: 2em;\
                             min-width: 0; min-height: 0;\
                             color:white;\
                             filter: drop-shadow(0 0 6px black);\
                             text-overflow: ellipsis;\
-                            overflow: hidden;");
+                            overflow: hidden;
+                            grid-area: main;");
                         html!{
-                            <>
-                                <div style={color_display_style}/>
+                            <div key={format!("{y}/{x}")} style={container_style} data-position={format!("{} {}", y, x)}>
                                 <input type="color"
-                                       data-position={format!("{} {}", y, x)}
                                        oninput={oninput.clone()}
-                                       value={e.clone()}
+                                       value={color.clone()}
                                        style={input_style}
                                        draggable="true"/>
-                                <p style={hex_display_style} >{e.clone()}</p>
-                            </>
+                                <p style={hex_display_style} >{color.clone()}</p>
+                            </div>
                         }
                     }).collect::<Html>()
                 }
             </div>
         }
     }
+    fn contextmenu(&self, ctx: &Context<Self>) -> Html {
+        if self.contextmenu_hidden {
+            return html!(<></>);
+        }
+        html! {
+            <></>
+        }
+    }
+}
+
+impl Component for ColorGrid {
+    type Message = Msg;
+    type Properties = ();
+
+    fn create(ctx: &Context<Self>) -> Self {
+        Self {
+            width: 1,
+            height: 1,
+            colors: {
+                let mut hash = HashMap::new();
+
+                hash.insert((0, 0), (1, 1, default_color()));
+                hash
+            },
+            contextmenu_hidden: true,
+        }
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        html! {
+            <>
+            {self.main(ctx)}
+            {self.contextmenu(ctx)}
+            </>
+        }
+    }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
-            Msg::RemoveRow { from, to } => todo!(),
-            Msg::RemoveColumn { from, to } => todo!(),
-            Msg::AddRow { index } => {
-                let index = if index < 0 { 1 + index + self.height as isize } else { index } as usize;
-                self.colors.insert(index, vec![default_color(); self.width]);
-                self.height += 1;
-                true
-            }
-            Msg::AddColumn { index } => {
-                let index = if index < 0 { 1 + index + self.width as isize } else { index } as usize;
-                for row in self.colors.iter_mut() {
-                    row.insert(index, default_color())
-                }
-                self.width += 1;
-                true
-            }
             Msg::SetColor { x, y, color } => {
-                self.colors[y][x] = color;
+                self.colors.get_mut(&(x, y)).iter_mut().for_each(|c| **c = (1, 1, color.clone()));
+                true
+            }
+            Msg::SplitRow { x, y } => todo!(),
+            Msg::SplitColumn { x, y } => todo!(),
+            Msg::Merge { x, y, w, h } => todo!(),
+            Msg::SetContextMenuState(active) => {
+                self.contextmenu_hidden = !active;
                 true
             }
         }
