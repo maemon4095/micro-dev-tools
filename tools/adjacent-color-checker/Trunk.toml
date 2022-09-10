@@ -1,6 +1,0 @@
-[build]
-target = "src/www/index.html"
-dist = ".build/dist"
-
-[watch]
-watch = ["src/"]

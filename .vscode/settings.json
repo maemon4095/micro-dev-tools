@@ -1,5 +1,0 @@
-{
-    "rust-analyzer.server.extraEnv": {
-        "CARGO_TARGET_DIR": "micro-dev-tools/.build/target"
-    }
-}

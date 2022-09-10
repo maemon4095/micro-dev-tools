@@ -1,6 +1,0 @@
-dist: .build/dist
-build:
-  debug:
-    - run: trunk build --public-url ${{config:public_url}}${{self:identity}}
-  release:
-    - run: trunk build --release --public-url ${{config:public_url}}${{self:identity}}

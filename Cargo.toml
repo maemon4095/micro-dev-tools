@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "micro-dev-tools",
-    "micro-dev-tools/src/.trunk/hooks/bundle",
-    "tools/*"
-]
