@@ -4,3 +4,6 @@ members = [
     "micro-dev-tools/src/.trunk/hooks/bundle",
     "tools/*"
 ]
+exclude = [
+    "tools/latex_prerender"
+]

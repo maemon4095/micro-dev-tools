@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script>
+        MathJax = {
+            startup: {
+                typeset: false
+            }
+        };
+    </script>
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+
+<body>
+    <div id="inputs">
+        <textarea id="pattern_input">`(.*?)`</textarea>
+        <input id="file_input" type="file" accept="image/svg+xml, text/*" />
+    </div>
+    <div id="output"></div>
+</body>
+<script>
+    const file_input = document.getElementById('file_input');
+    const output = document.getElementById('output');
+    const pattern_input = document.getElementById('pattern_input');
+
+    file_input.addEventListener('input', (inputEvent) => {
+        MathJax.texReset();
+        const pat_text = pattern_input.value;
+        const pattern = new RegExp(pat_text, 'g');
+        const [file] = inputEvent.target.files;
+        if (!file || !pattern) return;
+        const reader = new FileReader();
+        reader.addEventListener('load', (e) => {
+            const text = e.target.result;
+            const result = render(text, file.type, pattern);
+            console.log(result);
+            const link = createLink(file.name, file.type, result.text);
+
+            output.replaceChildren(...result.children);
+            output.append(link);
+        });
+        reader.readAsText(file);
+    });
+
+    function render(text, mime, pattern) {
+        switch (mime) {
+            case 'text/html':
+            case 'text/xml':
+            case 'application/xml':
+            case 'application/xhtml+xml':
+            case 'image/svg+xml': {
+                const parser = new DOMParser();
+                const dom = parser.parseFromString(text, mime);
+                if (!!dom) {
+                    replaceDom(dom, pattern);
+                    return { text: new XMLSerializer().serializeToString(dom), children: [...dom.children] };
+                } else {
+                    const t = renderText(text, pattern);
+                    return { text: t, children: [text] };
+                }
+            }
+            default: {
+                const t = renderText(text, pattern);
+                return { text: t, children: [text] };
+            }
+        }
+    }
+
+
+    function renderText(tex, patterns) {
+        return tex.replaceAll(pattern, (m, c) => {
+            const container = MathJax.tex2svg(c ?? m);
+            return container.innerHTML;
+        });
+    }
+
+    function replaceDom(dom, pattern) {
+        const children = dom.children;
+        if (children.length === 0 && !!dom.textContent) {
+            const matches = [...dom.textContent.matchAll(pattern)];
+            if (matches.length === 1) {
+                const [m, c] = matches[0];
+                const t = c ?? m;
+                const container = MathJax.tex2svg(t);
+                dom.textContent = "";
+                dom.appendChild(...container.children);
+            }
+        }
+        for (const e of children) {
+            replaceDom(e, pattern);
+        }
+    }
+
+
+    function createLink(filename, mime, text) {
+        const link = document.createElement('a');
+        link.innerText = "download";
+        link.href = `data:${mime},${encodeURIComponent(text)}`;
+        link.setAttribute('download', `prerendered-${filename}`);
+        return link;
+    }
+
+</script>
+
+</html>

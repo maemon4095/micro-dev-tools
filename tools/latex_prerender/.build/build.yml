@@ -1,0 +1,5 @@
+dist: .dist
+build:
+  _:
+    - run: cp -r . .dist
+    - run: rm -r .dist/.build

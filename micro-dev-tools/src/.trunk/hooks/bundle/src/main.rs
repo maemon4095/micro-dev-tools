@@ -481,7 +481,10 @@ impl<'a> ParseContext<'a> {
             let steps = steps.iter_mut().map(|step_doc| {
                 let run = self
                     .access(step_doc, "run")
-                    .map_err(|_| BuildConfigError::req_prop_not_exists("run"))
+                    .map_err(|e| match e {
+                        BuildConfigError::ReferenceNotFound { reference } if reference == "run" => BuildConfigError::req_prop_not_exists("run"),
+                        err @ _ => err,
+                    })
                     .and_then(|c| (&*c).as_str().ok_or_else(|| BuildConfigError::invalid_prop_value("run")))?;
                 let splitted = split_to_args(run);
                 let exec = splitted[0].to_string();
