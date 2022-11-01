@@ -16,7 +16,7 @@ fn main() {
 #[function_component(App)]
 fn app() -> Html {
     html! {
-        <ColorGrid width={1} height={1}/>
+        <ColorGrid width={2} height={2}/>
     }
 }
 
@@ -71,48 +71,33 @@ impl Component for ColorGrid {
             })
         });
         html! {
-            <div style={format!("\
-                display: grid; gap: 0;\
-                grid-template-rows: 15px repeat({}, minmax(0, 1fr)) 15px;\
-                grid-template-columns: 15px repeat({}, minmax(0, 1fr)) 15px;
-                place-items: center; overflow:hidden; ", height, width)}>
-                <button style="grid-row: 1; grid-column: 2 / -2;"
+            <div style={format!("display: grid; gap: 0; grid-template-rows: 15px repeat({}, 1fr) 15px; grid-template-columns: 15px repeat({}, 1fr) 15px; place-items: center; overflow:hidden;", height, width)}>
+                <button style="grid-row: 1; grid-column: 2 / -2"
                         draggable="true"
                         onclick={onclick_up}>//up
                 </button>
-                <button style="grid-row: -2; grid-column: 2 / -2;"
+                <button style="grid-row: -2; grid-column: 2 / -2"
                         draggable="true"
                         onclick={onclick_down}>//down
                 </button>
-                <button style="grid-row: 2 / -2; grid-column: 1;"
+                <button style="grid-row: 2 / -2; grid-column: 1"
                         draggable="true"
                         onclick={onclick_left}>//left
                 </button>
-                <button style="grid-row: 2 / -2; grid-column: -2;"
+                <button style="grid-row: 2 / -2; grid-column: -2"
                         draggable="true"
                         onclick={onclick_right}>//right
                 </button>
                 {
                     colors.iter().enumerate().flat_map(|(y, row)| row.iter().enumerate().map(move |(x, e)| (x, y, e))).map(|(x, y, e)| {
                         let area_rule = format!("grid-area: {}/{}", y + 2, x + 2);
-                        let color_display_style = format!("{area_rule}; background-color: {e};");
-                        let input_style =format!("{area_rule}; max-width: 11em; max-height: 5em;");
-                        let hex_display_style = format!("{area_rule};\
-                            max-width: min-content; max-height: 1em;\
-                            min-width: 0; min-height: 0;\
-                            color:white;\
-                            filter: drop-shadow(0 0 6px black);\
-                            text-overflow: ellipsis;\
-                            overflow: hidden;");
+                        let color_display_style = format!("{area_rule}; pointer-events: none; background-color: {e};");
+                        let input_style =format!("{area_rule}; width: 33%; height: 33%;");
+                        let hex_display_style = format!("{area_rule}; width: max-content; height: max-content; color:white; filter: drop-shadow(0 0 6px black);");
                         html!{
                             <>
+                                <input data-position={format!("{} {}", y, x)} oninput={oninput.clone()} type="color" value={e.clone()} style={input_style}/>
                                 <div style={color_display_style}/>
-                                <input type="color"
-                                       data-position={format!("{} {}", y, x)}
-                                       oninput={oninput.clone()}
-                                       value={e.clone()}
-                                       style={input_style}
-                                       draggable="true"/>
                                 <p style={hex_display_style} >{e.clone()}</p>
                             </>
                         }
