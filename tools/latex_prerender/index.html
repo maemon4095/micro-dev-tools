@@ -12,17 +12,23 @@
     <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
 
-<body>
-    <div id="inputs">
+<body style="display: grid;
+             grid-template: 'header' auto
+                            'main' 1fr / 1fr;">
+    <div style="grid-area: header; display: flex; flex-direction: row; gap: 1em; align-items: stretch;">
         <textarea id="pattern_input">`(.*?)`</textarea>
+        <hr>
         <input id="file_input" type="file" accept="image/svg+xml, text/*" />
+        <hr>
+        <a id="download"> download </a>
     </div>
-    <div id="output"></div>
+    <div id="output" style="grid-area: main; overflow: auto;"></div>
 </body>
 <script>
     const file_input = document.getElementById('file_input');
     const output = document.getElementById('output');
     const pattern_input = document.getElementById('pattern_input');
+    const button_download = document.getElementById('download');
 
     file_input.addEventListener('input', (inputEvent) => {
         MathJax.texReset();
@@ -34,11 +40,15 @@
         reader.addEventListener('load', (e) => {
             const text = e.target.result;
             const result = render(text, file.type, pattern);
-            console.log(result);
-            const link = createLink(file.name, file.type, result.text);
-
             output.replaceChildren(...result.children);
-            output.append(link);
+
+            const oldhref = button_download.href;
+            if (oldhref) {
+                URL.revokeObjectURL(oldhref);
+            }
+            const blob = new Blob([result.text], { type: file.type });
+            button_download.href = URL.createObjectURL(blob);
+            button_download.setAttribute('download', `prerendered-${file.name}`);
         });
         reader.readAsText(file);
     });
@@ -68,7 +78,7 @@
     }
 
 
-    function renderText(tex, patterns) {
+    function renderText(tex, pattern) {
         return tex.replaceAll(pattern, (m, c) => {
             const container = MathJax.tex2svg(c ?? m);
             return container.innerHTML;
@@ -91,16 +101,6 @@
             replaceDom(e, pattern);
         }
     }
-
-
-    function createLink(filename, mime, text) {
-        const link = document.createElement('a');
-        link.innerText = "download";
-        link.href = `data:${mime},${encodeURIComponent(text)}`;
-        link.setAttribute('download', `prerendered-${filename}`);
-        return link;
-    }
-
 </script>
 
 </html>
