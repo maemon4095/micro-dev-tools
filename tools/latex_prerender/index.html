@@ -81,21 +81,15 @@
     function renderText(tex, pattern) {
         return tex.replaceAll(pattern, (m, c) => {
             const container = MathJax.tex2svg(c ?? m);
-            return container.innerHTML;
+            return container.querySelector('svg').outerHTML ?? m;
         });
     }
 
     function replaceDom(dom, pattern) {
         const children = dom.children;
         if (children.length === 0 && !!dom.textContent) {
-            const matches = [...dom.textContent.matchAll(pattern)];
-            if (matches.length === 1) {
-                const [m, c] = matches[0];
-                const t = c ?? m;
-                const container = MathJax.tex2svg(t);
-                dom.textContent = "";
-                dom.appendChild(...container.children);
-            }
+            const rendered = renderText(dom.textContent, pattern);
+            dom.innerHTML = rendered;
         }
         for (const e of children) {
             replaceDom(e, pattern);
